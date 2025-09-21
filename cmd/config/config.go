@@ -1,0 +1,552 @@
+package config
+
+import (
+	"bufio"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+)
+
+func defaultConfigDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "."
+	}
+	return filepath.Join(home, ".config", "bindicatwo")
+}
+
+func defaultConfigBaseName() string { return "config" }
+
+func defaultConfigPathWithExt(ext string) string {
+	dir := defaultConfigDir()
+	name := defaultConfigBaseName()
+	if ext == "" {
+		ext = "yaml"
+	}
+	return filepath.Join(dir, name+"."+ext)
+}
+
+// AddConfigSubcommand adds a `config` management command with common subcommands:
+//   - init: create a new config file (default: ~/.config/bindicatwo/config.yaml)
+//   - set: set a key (search, prefer, json, firmware_enabled, firmware_version, firmware_file)
+//   - get: get a key or print all
+//   - unset: delete a key from the config
+//   - path: print the config file path in use
+func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Manage configuration file (search/prefer/json/firmware)",
+		Long:  "Create and edit the bindicatwo configuration using Viper-compatible formats.",
+	}
+
+	// `config init`
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Create a new configuration file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			format, _ := cmd.Flags().GetString("format")
+			force, _ := cmd.Flags().GetBool("force")
+
+			if err := ensureConfigTarget(format); err != nil {
+				return err
+			}
+
+			cfgPath := configPath()
+			// If exists and not force -> error
+			if fileExists(cfgPath) && !force {
+				return fmt.Errorf("config already exists at %s (use --force to overwrite)", cfgPath)
+			}
+
+			// Interactive prompts for initial values (empty allowed)
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Printf("Enter default search (address or postcode) [empty allowed]: ")
+			searchIn, _ := reader.ReadString('\n')
+			searchIn = strings.TrimRight(searchIn, "\r\n")
+
+			fmt.Printf("Enter default prefer (address contains) [empty allowed]: ")
+			preferIn, _ := reader.ReadString('\n')
+			preferIn = strings.TrimRight(preferIn, "\r\n")
+
+			fmt.Printf("Default output JSON? [y/N]: ")
+			jsonIn, _ := reader.ReadString('\n')
+			jsonIn = strings.TrimSpace(jsonIn)
+			jsonFlag := strings.EqualFold(jsonIn, "y") || strings.EqualFold(jsonIn, "yes") || strings.EqualFold(jsonIn, "true") || jsonIn == "1"
+
+			// Firmware configuration prompts
+			fmt.Printf("Enable firmware OTA endpoints? [y/N]: ")
+			firmwareEnabledIn, _ := reader.ReadString('\n')
+			firmwareEnabledIn = strings.TrimSpace(firmwareEnabledIn)
+			firmwareEnabledFlag := strings.EqualFold(firmwareEnabledIn, "y") || strings.EqualFold(firmwareEnabledIn, "yes") || strings.EqualFold(firmwareEnabledIn, "true") || firmwareEnabledIn == "1"
+
+			fmt.Printf("Enter firmware version string [empty allowed]: ")
+			firmwareVersionIn, _ := reader.ReadString('\n')
+			firmwareVersionIn = strings.TrimRight(firmwareVersionIn, "\r\n")
+
+			fmt.Printf("Enter firmware binary file path [empty allowed]: ")
+			firmwareFileIn, _ := reader.ReadString('\n')
+			firmwareFileIn = strings.TrimRight(firmwareFileIn, "\r\n")
+
+			// Set collected values (including empty strings)
+			viper.Set("search", searchIn)
+			viper.Set("prefer", preferIn)
+			viper.Set("json", jsonFlag)
+			viper.Set("firmware_enabled", firmwareEnabledFlag)
+			viper.Set("firmware_version", firmwareVersionIn)
+			viper.Set("firmware_file", firmwareFileIn)
+
+			// Write new file (overwrite if --force)
+			viper.SetConfigFile(cfgPath)
+			viper.SetConfigType(configTypeFromExt(cfgPath))
+			if force {
+				return viper.WriteConfigAs(cfgPath)
+			}
+			if err := viper.SafeWriteConfigAs(cfgPath); err != nil {
+				// If fails due to exists (race), try WriteConfigAs
+				if _, ok := err.(viper.ConfigFileAlreadyExistsError); ok {
+					return viper.WriteConfigAs(cfgPath)
+				}
+				return err
+			}
+			return nil
+		},
+	}
+	initCmd.Flags().String("format", "yaml", "Config format: yaml|json|toml")
+	initCmd.Flags().Bool("force", false, "Overwrite existing file if present")
+	initCmd.Flags().String("search", "", "Initial default for search")
+	initCmd.Flags().String("prefer", "", "Initial default for prefer")
+	initCmd.Flags().Bool("json", false, "Initial default: output JSON")
+	cmd.AddCommand(initCmd)
+
+	// `config set <key> <value>`
+	setCmd := &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Set a configuration key (search, prefer, json, firmware_enabled, firmware_version, firmware_file)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireConfigFile(); err != nil {
+				return err
+			}
+			key := normalizeKey(args[0])
+			val := args[1]
+			if key == "json" || key == "firmware_enabled" {
+				v := strings.EqualFold(val, "true") || val == "1" || strings.EqualFold(val, "yes")
+				viper.Set(key, v)
+			} else {
+				viper.Set(key, val)
+			}
+			return writeBack()
+		},
+	}
+	cmd.AddCommand(setCmd)
+
+	// `config get [key]`
+	getCmd := &cobra.Command{
+		Use:   "get [key]",
+		Short: "Get a configuration value or all values",
+		Args:  cobra.RangeArgs(0, 1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = viper.ReadInConfig() // best-effort
+			if len(args) == 0 {
+				// Print all known keys we care about
+				fmt.Printf("search: %s\n", viper.GetString("search"))
+				fmt.Printf("prefer: %s\n", viper.GetString("prefer"))
+				fmt.Printf("json: %v\n", viper.GetBool("json"))
+				fmt.Printf("firmware_enabled: %v\n", viper.GetBool("firmware_enabled"))
+				fmt.Printf("firmware_version: %s\n", viper.GetString("firmware_version"))
+				fmt.Printf("firmware_file: %s\n", viper.GetString("firmware_file"))
+				fmt.Printf("file: %s\n", viper.ConfigFileUsed())
+				return nil
+			}
+			key := normalizeKey(args[0])
+			switch key {
+			case "search":
+				fmt.Println(viper.GetString("search"))
+			case "prefer":
+				fmt.Println(viper.GetString("prefer"))
+			case "json", "firmware_enabled":
+				fmt.Println(viper.GetBool(key))
+			case "firmware_version", "firmware_file":
+				fmt.Println(viper.GetString(key))
+			default:
+				return fmt.Errorf("unknown key: %s", key)
+			}
+			return nil
+		},
+	}
+	cmd.AddCommand(getCmd)
+
+	// `config unset <key>`
+	unsetCmd := &cobra.Command{
+		Use:   "unset <key>",
+		Short: "Delete a key from the configuration file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireConfigFile(); err != nil {
+				return err
+			}
+			key := normalizeKey(args[0])
+			if err := deleteKey(key); err != nil {
+				return err
+			}
+			return writeBack()
+		},
+	}
+	cmd.AddCommand(unsetCmd)
+
+	// `config path`
+	pathCmd := &cobra.Command{
+		Use:   "path",
+		Short: "Print the path to the config file in use",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := viper.ReadInConfig(); err == nil {
+				fmt.Println(viper.ConfigFileUsed())
+				return nil
+			}
+			fmt.Println(configPath())
+			return nil
+		},
+	}
+	cmd.AddCommand(pathCmd)
+
+	// API key management subtree
+	addAPIKeysSubcommands(cmd)
+
+	root.AddCommand(cmd)
+	return cmd
+}
+
+// --- API key management ---
+
+func addAPIKeysSubcommands(parent *cobra.Command) {
+	api := &cobra.Command{
+		Use:   "api-keys",
+		Short: "Manage API keys for the HTTP server",
+		Long:  "Generate and manage API keys used to authenticate requests to the serve endpoint.",
+	}
+
+	// list
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List configured API keys",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = viper.ReadInConfig()
+			keys := getAPIKeysFromViper()
+			if len(keys) == 0 {
+				fmt.Println("(no api keys configured)")
+				return nil
+			}
+			for _, k := range keys {
+				fmt.Println(k)
+			}
+			return nil
+		},
+	}
+	api.AddCommand(list)
+
+	// add <key>
+	add := &cobra.Command{
+		Use:   "add <key>",
+		Short: "Add an API key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireConfigFile(); err != nil {
+				return err
+			}
+			keys := getAPIKeysFromViper()
+			key := strings.TrimSpace(args[0])
+			if key == "" {
+				return fmt.Errorf("empty key")
+			}
+			for _, k := range keys {
+				if k == key {
+					return fmt.Errorf("key already exists")
+				}
+			}
+			keys = append(keys, key)
+			return setAPIKeys(keys)
+		},
+	}
+	api.AddCommand(add)
+
+	// remove <key>
+	remove := &cobra.Command{
+		Use:   "remove <key>",
+		Short: "Remove an API key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireConfigFile(); err != nil {
+				return err
+			}
+			want := strings.TrimSpace(args[0])
+			if want == "" {
+				return fmt.Errorf("empty key")
+			}
+			keys := getAPIKeysFromViper()
+			out := make([]string, 0, len(keys))
+			for _, k := range keys {
+				if k != want {
+					out = append(out, k)
+				}
+			}
+			if len(out) == len(keys) {
+				return fmt.Errorf("key not found")
+			}
+			return setAPIKeys(out)
+		},
+	}
+	api.AddCommand(remove)
+
+	// generate
+	gen := &cobra.Command{
+		Use:   "generate",
+		Short: "Generate a random API key and add it",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := requireConfigFile(); err != nil {
+				return err
+			}
+			length, _ := cmd.Flags().GetInt("length")
+			if length <= 0 {
+				length = 32
+			}
+			key, err := generateAPIKey(length)
+			if err != nil {
+				return err
+			}
+			keys := getAPIKeysFromViper()
+			keys = append(keys, key)
+			if err := setAPIKeys(keys); err != nil {
+				return err
+			}
+			fmt.Println(key)
+			return nil
+		},
+	}
+	gen.Flags().Int("length", 32, "Key length in bytes before hex encoding (default 32 => 64 hex chars)")
+	api.AddCommand(gen)
+
+	parent.AddCommand(api)
+}
+
+func getAPIKeysFromViper() []string {
+	keys := []string{}
+	v := viper.Get("api_keys")
+	switch t := v.(type) {
+	case []string:
+		for _, k := range t {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				keys = append(keys, k)
+			}
+		}
+	case []any:
+		for _, it := range t {
+			if s, ok := it.(string); ok {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					keys = append(keys, s)
+				}
+			}
+		}
+	case string:
+		// Support CSV from env
+		csv := strings.TrimSpace(t)
+		if csv != "" {
+			parts := strings.Split(csv, ",")
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					keys = append(keys, p)
+				}
+			}
+		}
+	}
+	if s := strings.TrimSpace(viper.GetString("api_key")); s != "" {
+		keys = append(keys, s)
+	}
+	// dedupe
+	if len(keys) > 1 {
+		seen := map[string]struct{}{}
+		out := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if _, ok := seen[k]; !ok {
+				seen[k] = struct{}{}
+				out = append(out, k)
+			}
+		}
+		keys = out
+	}
+	return keys
+}
+
+func setAPIKeys(keys []string) error {
+	// Clean and sort for stability
+	clean := make([]string, 0, len(keys))
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k != "" {
+			clean = append(clean, k)
+		}
+	}
+	viper.Set("api_keys", clean)
+	viper.Set("api_key", "")
+	return writeBack()
+}
+
+func generateAPIKey(nbytes int) (string, error) {
+	b := make([]byte, nbytes)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func ensureConfigTarget(format string) error {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format == "" {
+		format = "yaml"
+	}
+	switch format {
+	case "yaml", "yml", "json", "toml":
+		// ok
+	default:
+		return fmt.Errorf("unsupported format: %s", format)
+	}
+	// If a custom --config was specified at root, we honor its extension.
+	cfgUsed := viper.ConfigFileUsed()
+	if cfgUsed != "" {
+		return nil
+	}
+	// Otherwise, choose ~/.config/bindicatwo/config.<ext>
+	ext := extFromFormat(format)
+	p := defaultConfigPathWithExt(ext)
+	// ensure directory exists
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	viper.SetConfigFile(p)
+	return nil
+}
+
+func configPath() string {
+	if v := viper.ConfigFileUsed(); v != "" {
+		return v
+	}
+	// Default location: ~/.config/bindicatwo/config.yaml
+	return filepath.Clean(defaultConfigPathWithExt("yaml"))
+}
+
+func configTypeFromExt(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".json":
+		return "json"
+	case ".toml":
+		return "toml"
+	default:
+		return "yaml"
+	}
+}
+
+func extFromFormat(format string) string {
+	switch strings.ToLower(format) {
+	case "yaml", "yml":
+		return "yaml"
+	case "json":
+		return "json"
+	case "toml":
+		return "toml"
+	default:
+		return "yaml"
+	}
+}
+
+func fileExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func requireConfigFile() error {
+	// If a config has been loaded, use it; otherwise, try to read default, or create it.
+	if err := viper.ReadInConfig(); err == nil {
+		return nil
+	}
+	p := configPath()
+	// Ensure directory exists
+	dir := filepath.Dir(p)
+	_ = os.MkdirAll(dir, 0o755)
+	// If doesn't exist, create an empty file first.
+	if !fileExists(p) {
+		viper.SetConfigFile(p)
+		viper.SetConfigType(configTypeFromExt(p))
+		// write empty map
+		if err := viper.SafeWriteConfigAs(p); err != nil {
+			// If SafeWrite fails because exists (race), continue
+			// Else try WriteConfigAs as a fallback
+			_ = viper.WriteConfigAs(p)
+		}
+	}
+	return viper.ReadInConfig()
+}
+
+func writeBack() error {
+	p := viper.ConfigFileUsed()
+	if p == "" {
+		p = configPath()
+	}
+	// Ensure directory exists
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	viper.SetConfigFile(p)
+	viper.SetConfigType(configTypeFromExt(p))
+	if !fileExists(p) {
+		return viper.WriteConfigAs(p)
+	}
+	return viper.WriteConfig()
+}
+
+func normalizeKey(k string) string {
+	k = strings.ToLower(strings.TrimSpace(k))
+	switch k {
+	case "search", "prefer", "json", "firmware_enabled", "firmware_version", "firmware_file":
+		return k
+	default:
+		return k
+	}
+}
+
+func deleteKey(key string) error {
+	key = normalizeKey(key)
+	if key == "" {
+		return fmt.Errorf("empty key")
+	}
+	// Make a settings map, remove the key, and reload into Viper before writing.
+	settings := viper.AllSettings()
+	delete(settings, key)
+	// Now we need to replace Viper's internal config with this map.
+	v := viper.GetViper()
+	v.Set("__placeholder__", 0) // ensure v has at least one key
+	// Reset by creating a new Viper is overkill; instead, set known keys.
+	for k := range v.AllSettings() {
+		v.Set(k, nil)
+	}
+	for k, val := range settings {
+		v.Set(k, val)
+	}
+	// Best-effort: some formats may retain nulls; WriteConfig will serialize current view.
+	return nil
+}
