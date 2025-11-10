@@ -321,11 +321,12 @@ func scheduleHandler(w http.ResponseWriter, r *http.Request) {
 
 	// First try to extract UPRN from path (e.g., /schedule/100080795976)
 	uprn := ""
-	path := strings.TrimPrefix(r.URL.Path, "/schedule/")
-	path = strings.TrimPrefix(path, "/")
-	if path != "" && path != r.URL.Path {
-		// Successfully extracted from path
+	if strings.HasPrefix(r.URL.Path, "/schedule/") {
+		path := strings.TrimPrefix(r.URL.Path, "/schedule/")
 		uprn = strings.TrimSpace(path)
+	} else if r.URL.Path == "/" {
+		// Root path, check query params
+		uprn = ""
 	}
 
 	// Fallback to query parameters for backward compatibility
