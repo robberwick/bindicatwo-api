@@ -89,14 +89,14 @@ var (
 	cache   = map[string]cacheEntry{}
 )
 
-func cacheKey(search, prefer string) string {
-	return strings.ToLower(strings.TrimSpace(search)) + "\n" + strings.ToLower(strings.TrimSpace(prefer))
+func cacheKey(uprn string) string {
+	return strings.ToLower(strings.TrimSpace(uprn))
 }
 
-func getCached(search, prefer string) ([]nhdc.Item, bool) {
+func getCached(uprn string) ([]nhdc.Item, bool) {
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	k := cacheKey(search, prefer)
+	k := cacheKey(uprn)
 	ce, ok := cache[k]
 	if !ok || time.Now().After(ce.expiresAt) {
 		return nil, false
@@ -110,7 +110,7 @@ func getCached(search, prefer string) ([]nhdc.Item, bool) {
 	return out, true
 }
 
-func putCached(search, prefer string, data []nhdc.Item, ttl time.Duration) {
+func putCached(uprn string, data []nhdc.Item, ttl time.Duration) {
 	if ttl <= 0 {
 		return
 	}
@@ -120,7 +120,7 @@ func putCached(search, prefer string, data []nhdc.Item, ttl time.Duration) {
 	}
 	cacheMu.Lock()
 	defer cacheMu.Unlock()
-	k := cacheKey(search, prefer)
+	k := cacheKey(uprn)
 	cache[k] = cacheEntry{data: append([]nhdc.Item(nil), data...), expiresAt: time.Now().Add(ttl)}
 }
 
@@ -257,9 +257,6 @@ func runServer() error {
 	upstreamLimiter = newTokenBucket(rps, burst)
 
 	mux := http.NewServeMux()
-	// Protect schedule endpoints with API key auth (if configured)
-	mux.Handle("/", withAuth(http.HandlerFunc(scheduleHandler)))
-	mux.Handle("/schedule", withAuth(http.HandlerFunc(scheduleHandler)))
 	// Health is public
 	mux.HandleFunc("/healthz", healthHandler)
 
@@ -268,6 +265,13 @@ func runServer() error {
 		mux.HandleFunc("/firmware/version.txt", firmwareVersionHandler)
 		mux.HandleFunc("/firmware/bindicatwo_firmware.bin", firmwareBinaryHandler)
 	}
+
+	// Protect schedule endpoints with API key auth (if configured)
+	// Primary route: /schedule/{uprn} where uprn is a path parameter
+	mux.Handle("/schedule/", withAuth(http.HandlerFunc(scheduleHandler)))
+	// Fallback routes for backward compatibility (query parameter style)
+	mux.Handle("/schedule", withAuth(http.HandlerFunc(scheduleHandler)))
+	mux.Handle("/", withAuth(http.HandlerFunc(scheduleHandler)))
 
 	h := withLogging(withCORS(mux))
 
@@ -314,61 +318,66 @@ func runServer() error {
 func scheduleHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	ctx := r.Context()
-	q := r.URL.Query()
-	// Accept a few aliases for convenience
-	search := strings.TrimSpace(q.Get("search"))
-	if search == "" {
-		for _, k := range []string{"q", "address", "addr", "postcode", "pc", "s"} {
-			if v := strings.TrimSpace(q.Get(k)); v != "" {
-				search = v
-				break
+
+	// First try to extract UPRN from path (e.g., /schedule/100080795976)
+	uprn := ""
+	path := strings.TrimPrefix(r.URL.Path, "/schedule/")
+	path = strings.TrimPrefix(path, "/")
+	if path != "" && path != r.URL.Path {
+		// Successfully extracted from path
+		uprn = strings.TrimSpace(path)
+	}
+
+	// Fallback to query parameters for backward compatibility
+	if uprn == "" {
+		q := r.URL.Query()
+		// Accept a few aliases for convenience
+		uprn = strings.TrimSpace(q.Get("uprn"))
+		if uprn == "" {
+			for _, k := range []string{"u", "id"} {
+				if v := strings.TrimSpace(q.Get(k)); v != "" {
+					uprn = v
+					break
+				}
 			}
 		}
 	}
-	prefer := strings.TrimSpace(q.Get("prefer"))
-	if prefer == "" {
-		for _, k := range []string{"contains", "prefer_contains", "preferContains"} {
-			if v := strings.TrimSpace(q.Get(k)); v != "" {
-				prefer = v
-				break
-			}
-		}
-	}
-	if search == "" {
-		log.Printf("schedule: missing search param ip=%s", clientIP(r))
+
+	if uprn == "" {
+		log.Printf("schedule: missing uprn param ip=%s", clientIP(r))
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": "missing 'search' query parameter"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "missing UPRN: provide as path (/schedule/{uprn}) or query parameter (?uprn=...)"})
 		return
 	}
 
-	if data, ok := getCached(search, prefer); ok {
-		log.Printf("schedule: cache hit search=%q prefer=%q", search, prefer)
+	if data, ok := getCached(uprn); ok {
+		log.Printf("schedule: cache hit uprn=%q", uprn)
 		items := append([]nhdc.Item(nil), data...)
 		nhdc.ComputeRelativeFields(items)
 		_ = json.NewEncoder(w).Encode(items)
 		return
 	}
-	log.Printf("schedule: cache miss search=%q prefer=%q", search, prefer)
+	log.Printf("schedule: cache miss uprn=%q", uprn)
 
 	// Throttle upstream calls
 	if err := upstreamLimiter.wait(ctx); err != nil {
-		log.Printf("schedule: rate limited search=%q prefer=%q err=%v", search, prefer, err)
+		log.Printf("schedule: rate limited uprn=%q err=%v", uprn, err)
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": "rate limited", "detail": err.Error()})
 		return
 	}
 
 	start := time.Now()
-	items, err := nhdc.GetSchedule(srvClient, search, prefer)
+	items, err := nhdc.GetSchedule(srvClient, uprn)
 	if err != nil {
-		log.Printf("schedule: upstream error search=%q prefer=%q dur=%s err=%v", search, prefer, time.Since(start), err)
+		log.Printf("schedule: upstream error uprn=%q dur=%s err=%v", uprn, time.Since(start), err)
 		w.WriteHeader(http.StatusBadGateway)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": "upstream error", "detail": err.Error()})
 		return
 	}
-	log.Printf("schedule: upstream ok search=%q prefer=%q dur=%s items=%d", search, prefer, time.Since(start), len(items))
+	log.Printf("schedule: upstream ok uprn=%q dur=%s items=%d", uprn, time.Since(start), len(items))
 	nhdc.ComputeRelativeFields(items)
-	putCached(search, prefer, items, viper.GetDuration("cache_ttl"))
+	putCached(uprn, items, viper.GetDuration("cache_ttl"))
 	_ = json.NewEncoder(w).Encode(items)
 }
 

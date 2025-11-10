@@ -182,12 +182,9 @@ func convertMobileAPIToItems(apiResp *MobileAPIResponse) []Item {
 	return items
 }
 
-// Public API
-// GetSchedule fetches the bin collection schedule for a given UPRN
-// The search parameter should be a UPRN (Unique Property Reference Number)
-func GetSchedule(c *http.Client, search, preferContains string) ([]Item, error) {
-	// The search parameter is expected to be a UPRN
-	uprn := strings.TrimSpace(search)
+// GetSchedule fetches the bin collection schedule for the given UPRN.
+func GetSchedule(c *http.Client, uprn string) ([]Item, error) {
+	uprn = strings.TrimSpace(uprn)
 	if uprn == "" {
 		return nil, errors.New("UPRN is required")
 	}

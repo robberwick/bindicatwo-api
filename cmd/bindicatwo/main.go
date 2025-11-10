@@ -33,16 +33,15 @@ func execute() error {
 
 	config.AddConfigSubcommand(rootCmd)
 	query.AddQuerySubcommand(rootCmd, func(cmd *cobra.Command) error {
-		search := viper.GetString("search")
-		prefer := viper.GetString("prefer")
+		uprn := viper.GetString("uprn")
 		asJSON := viper.GetBool("json")
 
-		if strings.TrimSpace(search) == "" {
-			return fmt.Errorf("search is required: provide --search or set SEARCH env var or set it in the config")
+		if strings.TrimSpace(uprn) == "" {
+			return fmt.Errorf("uprn is required: provide --uprn or set UPRN env var or set it in the config")
 		}
 
 		client := nhdc.NewClient()
-		items, err := nhdc.GetSchedule(client, search, prefer)
+		items, err := nhdc.GetSchedule(client, uprn)
 		if err != nil {
 			return err
 		}

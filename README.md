@@ -35,7 +35,8 @@ website, scrapes upcoming bin collections, and outputs a normalized schedule. Th
 
 - Run HTTP server on port 8080:
   - bindicatwo serve
-  - curl "http://127.0.0.1:8080/?search=SG4%209TY&prefer=Some%20Street" -H "X-API-Key: <key>"  # if keys configured
+  - curl "http://127.0.0.1:8080/schedule/100080795976" -H "X-API-Key: <key>"  # if keys configured
+  - curl "http://127.0.0.1:8080/schedule?uprn=100080795976" -H "X-API-Key: <key>"  # backward compatible query param
 
 - Create a config file and set defaults:
   - bindicatwo config init
@@ -110,12 +111,19 @@ Start the server:
 Default listen address is 127.0.0.1:8080. Change with --addr and --port or environment variables.
 
 Endpoints:
-- GET / or /schedule
-  - Query parameters:
-    - search (also accepts q, address, addr, postcode, pc, s)
-    - prefer (also accepts contains, prefer_contains, preferContains)
+- GET /schedule/{uprn}
+  - Path parameter:
+    - uprn: the Unique Property Reference Number (e.g., 100080795976)
   - Returns: JSON array of upcoming collections. Relative fields are included.
   - Authentication: optional; see Authentication section.
+  - Example: GET /schedule/100080795976
+
+- GET / or /schedule (backward compatible)
+  - Query parameters:
+    - uprn (also accepts u, id)
+  - Returns: JSON array of upcoming collections. Relative fields are included.
+  - Authentication: optional; see Authentication section.
+  - Example: GET /schedule?uprn=100080795976
 
 - GET /healthz
   - Returns 200 OK with a minimal body.

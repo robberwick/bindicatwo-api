@@ -34,14 +34,14 @@ func defaultConfigPathWithExt(ext string) string {
 
 // AddConfigSubcommand adds a `config` management command with common subcommands:
 //   - init: create a new config file (default: ~/.config/bindicatwo/config.yaml)
-//   - set: set a key (search, prefer, json, firmware_enabled, firmware_version, firmware_file)
+//   - set: set a key (uprn, json, firmware_enabled, firmware_version, firmware_file)
 //   - get: get a key or print all
 //   - unset: delete a key from the config
 //   - path: print the config file path in use
 func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Manage configuration file (search/prefer/json/firmware)",
+		Short: "Manage configuration file (uprn/json/firmware)",
 		Long:  "Create and edit the bindicatwo configuration using Viper-compatible formats.",
 	}
 
@@ -65,13 +65,9 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 
 			// Interactive prompts for initial values (empty allowed)
 			reader := bufio.NewReader(os.Stdin)
-			fmt.Printf("Enter default search (address or postcode) [empty allowed]: ")
-			searchIn, _ := reader.ReadString('\n')
-			searchIn = strings.TrimRight(searchIn, "\r\n")
-
-			fmt.Printf("Enter default prefer (address contains) [empty allowed]: ")
-			preferIn, _ := reader.ReadString('\n')
-			preferIn = strings.TrimRight(preferIn, "\r\n")
+			fmt.Printf("Enter default UPRN (Unique Property Reference Number) [empty allowed]: ")
+			uprnIn, _ := reader.ReadString('\n')
+			uprnIn = strings.TrimRight(uprnIn, "\r\n")
 
 			fmt.Printf("Default output JSON? [y/N]: ")
 			jsonIn, _ := reader.ReadString('\n')
@@ -93,8 +89,7 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 			firmwareFileIn = strings.TrimRight(firmwareFileIn, "\r\n")
 
 			// Set collected values (including empty strings)
-			viper.Set("search", searchIn)
-			viper.Set("prefer", preferIn)
+			viper.Set("uprn", uprnIn)
 			viper.Set("json", jsonFlag)
 			viper.Set("firmware_enabled", firmwareEnabledFlag)
 			viper.Set("firmware_version", firmwareVersionIn)
@@ -118,15 +113,14 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 	}
 	initCmd.Flags().String("format", "yaml", "Config format: yaml|json|toml")
 	initCmd.Flags().Bool("force", false, "Overwrite existing file if present")
-	initCmd.Flags().String("search", "", "Initial default for search")
-	initCmd.Flags().String("prefer", "", "Initial default for prefer")
+	initCmd.Flags().String("uprn", "", "Initial default for UPRN")
 	initCmd.Flags().Bool("json", false, "Initial default: output JSON")
 	cmd.AddCommand(initCmd)
 
 	// `config set <key> <value>`
 	setCmd := &cobra.Command{
 		Use:   "set <key> <value>",
-		Short: "Set a configuration key (search, prefer, json, firmware_enabled, firmware_version, firmware_file)",
+		Short: "Set a configuration key (uprn, json, firmware_enabled, firmware_version, firmware_file)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := requireConfigFile(); err != nil {
@@ -154,8 +148,7 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 			_ = viper.ReadInConfig() // best-effort
 			if len(args) == 0 {
 				// Print all known keys we care about
-				fmt.Printf("search: %s\n", viper.GetString("search"))
-				fmt.Printf("prefer: %s\n", viper.GetString("prefer"))
+				fmt.Printf("uprn: %s\n", viper.GetString("uprn"))
 				fmt.Printf("json: %v\n", viper.GetBool("json"))
 				fmt.Printf("firmware_enabled: %v\n", viper.GetBool("firmware_enabled"))
 				fmt.Printf("firmware_version: %s\n", viper.GetString("firmware_version"))
@@ -165,10 +158,8 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 			}
 			key := normalizeKey(args[0])
 			switch key {
-			case "search":
-				fmt.Println(viper.GetString("search"))
-			case "prefer":
-				fmt.Println(viper.GetString("prefer"))
+			case "uprn":
+				fmt.Println(viper.GetString("uprn"))
 			case "json", "firmware_enabled":
 				fmt.Println(viper.GetBool(key))
 			case "firmware_version", "firmware_file":
@@ -522,7 +513,7 @@ func writeBack() error {
 func normalizeKey(k string) string {
 	k = strings.ToLower(strings.TrimSpace(k))
 	switch k {
-	case "search", "prefer", "json", "firmware_enabled", "firmware_version", "firmware_file":
+	case "uprn", "json", "firmware_enabled", "firmware_version", "firmware_file":
 		return k
 	default:
 		return k

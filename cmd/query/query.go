@@ -13,19 +13,17 @@ func AddQuerySubcommand(root *cobra.Command, run func(cmd *cobra.Command) error)
 	cmd := &cobra.Command{
 		Use:   "query",
 		Short: "Query upcoming bin collections",
-		Long:  "Query upcoming bin collections for an address/postcode. By default prints a human-readable list; pass --json to output JSON.",
+		Long:  "Query upcoming bin collections for a UPRN. By default prints a human-readable list; pass --json to output JSON.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// bind flags local to this command
-			_ = viper.BindPFlag("search", cmd.Flags().Lookup("search"))
-			_ = viper.BindPFlag("prefer", cmd.Flags().Lookup("prefer"))
+			_ = viper.BindPFlag("uprn", cmd.Flags().Lookup("uprn"))
 			_ = viper.BindPFlag("json", cmd.Flags().Lookup("json"))
 			return run(cmd)
 		},
 	}
 
 	// Flags for query command
-	cmd.Flags().StringP("search", "s", "", "Search query (address or postcode). Can also be set via SEARCH env or config.")
-	cmd.Flags().StringP("prefer", "p", "", "Prefer address containing this text when multiple matches. Can also be set via PREFER env or config.")
+	cmd.Flags().StringP("uprn", "u", "", "UPRN (Unique Property Reference Number). Can also be set via UPRN env or config.")
 	cmd.Flags().BoolP("json", "j", false, "Output JSON instead of human-readable text. Can also be set via JSON env or config.")
 
 	root.AddCommand(cmd)
