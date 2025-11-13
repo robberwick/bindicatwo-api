@@ -710,8 +710,6 @@ func selectAddressForConfig(addresses []nhdc.Address) (*nhdc.Address, error) {
 		Items:     addresses,
 		Templates: templates,
 		Size:      10,
-		Stdin:     os.Stdin,
-		Stdout:    os.Stderr,
 	}
 
 	idx, _, err := prompt.Run()
