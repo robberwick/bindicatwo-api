@@ -1,14 +1,15 @@
 package config
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/manifoldco/promptui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -63,30 +64,110 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 				return fmt.Errorf("config already exists at %s (use --force to overwrite)", cfgPath)
 			}
 
-			// Interactive prompts for initial values (empty allowed)
-			reader := bufio.NewReader(os.Stdin)
-			fmt.Printf("Enter default UPRN (Unique Property Reference Number) [empty allowed]: ")
-			uprnIn, _ := reader.ReadString('\n')
-			uprnIn = strings.TrimRight(uprnIn, "\r\n")
+			// Interactive prompts for initial values using promptui
+			// Check if values were provided via flags first
+			uprnFlagProvided := cmd.Flags().Changed("uprn")
+			uprnFlag, _ := cmd.Flags().GetString("uprn")
+			jsonFlagProvided := cmd.Flags().Changed("json")
+			jsonFlag, _ := cmd.Flags().GetBool("json")
+			firmwareEnableFlagProvided := cmd.Flags().Changed("firmware-enable")
+			firmwareEnableFlag, _ := cmd.Flags().GetBool("firmware-enable")
+			firmwareVersionFlagProvided := cmd.Flags().Changed("firmware-version")
+			firmwareVersionFlag, _ := cmd.Flags().GetString("firmware-version")
+			firmwareFileFlagProvided := cmd.Flags().Changed("firmware-file")
+			firmwareFileFlag, _ := cmd.Flags().GetString("firmware-file")
 
-			fmt.Printf("Default output JSON? [y/N]: ")
-			jsonIn, _ := reader.ReadString('\n')
-			jsonIn = strings.TrimSpace(jsonIn)
-			jsonFlag := strings.EqualFold(jsonIn, "y") || strings.EqualFold(jsonIn, "yes") || strings.EqualFold(jsonIn, "true") || jsonIn == "1"
+			var uprnIn string
+			var firmwareEnabledFlag bool
+			var firmwareVersionIn string
+			var firmwareFileIn string
 
-			// Firmware configuration prompts
-			fmt.Printf("Enable firmware OTA endpoints? [y/N]: ")
-			firmwareEnabledIn, _ := reader.ReadString('\n')
-			firmwareEnabledIn = strings.TrimSpace(firmwareEnabledIn)
-			firmwareEnabledFlag := strings.EqualFold(firmwareEnabledIn, "y") || strings.EqualFold(firmwareEnabledIn, "yes") || strings.EqualFold(firmwareEnabledIn, "true") || firmwareEnabledIn == "1"
+			// UPRN prompt with validation (skip if flag provided)
+			if uprnFlagProvided {
+				uprnIn = uprnFlag
+			} else {
+				uprnPrompt := promptui.Prompt{
+					Label:   "Enter default UPRN (Unique Property Reference Number)",
+					Default: "",
+					Stdin:   os.Stdin,
+					Validate: func(input string) error {
+						input = strings.TrimSpace(input)
+						// Allow empty, but if provided, must be at least 8 characters
+						if input != "" && len(input) < 8 {
+							return errors.New("UPRN must be at least 8 characters")
+						}
+						return nil
+					},
+				}
+				result, err := uprnPrompt.Run()
+				if err != nil {
+					return fmt.Errorf("UPRN prompt failed: %w", err)
+				}
+				uprnIn = strings.TrimSpace(result)
+			}
 
-			fmt.Printf("Enter firmware version string [empty allowed]: ")
-			firmwareVersionIn, _ := reader.ReadString('\n')
-			firmwareVersionIn = strings.TrimRight(firmwareVersionIn, "\r\n")
+			// JSON output confirm prompt (skip if flag provided)
+			if !jsonFlagProvided {
+				jsonPrompt := promptui.Prompt{
+					Label:     "Default output JSON",
+					IsConfirm: true,
+					Stdin:     os.Stdin,
+				}
+				jsonResult, err := jsonPrompt.Run()
+				if err != nil && err != promptui.ErrAbort {
+					return fmt.Errorf("JSON prompt failed: %w", err)
+				}
+				// IsConfirm returns "y" or error (ErrAbort for "n")
+				jsonFlag = (err == nil && strings.EqualFold(jsonResult, "y"))
+			}
 
-			fmt.Printf("Enter firmware binary file path [empty allowed]: ")
-			firmwareFileIn, _ := reader.ReadString('\n')
-			firmwareFileIn = strings.TrimRight(firmwareFileIn, "\r\n")
+			// Firmware enabled confirm prompt (skip if flag provided)
+			if firmwareEnableFlagProvided {
+				firmwareEnabledFlag = firmwareEnableFlag
+			} else {
+				firmwareEnabledPrompt := promptui.Prompt{
+					Label:     "Enable firmware OTA endpoints",
+					IsConfirm: true,
+					Stdin:     os.Stdin,
+				}
+				firmwareEnabledResult, err := firmwareEnabledPrompt.Run()
+				if err != nil && err != promptui.ErrAbort {
+					return fmt.Errorf("firmware enabled prompt failed: %w", err)
+				}
+				firmwareEnabledFlag = (err == nil && strings.EqualFold(firmwareEnabledResult, "y"))
+			}
+
+			// Firmware version prompt (skip if flag provided)
+			if firmwareVersionFlagProvided {
+				firmwareVersionIn = firmwareVersionFlag
+			} else {
+				firmwareVersionPrompt := promptui.Prompt{
+					Label:   "Enter firmware version string (optional)",
+					Default: "",
+					Stdin:   os.Stdin,
+				}
+				result, err := firmwareVersionPrompt.Run()
+				if err != nil {
+					return fmt.Errorf("firmware version prompt failed: %w", err)
+				}
+				firmwareVersionIn = strings.TrimSpace(result)
+			}
+
+			// Firmware file path prompt (skip if flag provided)
+			if firmwareFileFlagProvided {
+				firmwareFileIn = firmwareFileFlag
+			} else {
+				firmwareFilePrompt := promptui.Prompt{
+					Label:   "Enter firmware binary file path (optional)",
+					Default: "",
+					Stdin:   os.Stdin,
+				}
+				result, err := firmwareFilePrompt.Run()
+				if err != nil {
+					return fmt.Errorf("firmware file prompt failed: %w", err)
+				}
+				firmwareFileIn = strings.TrimSpace(result)
+			}
 
 			// Set collected values (including empty strings)
 			viper.Set("uprn", uprnIn)
@@ -115,6 +196,9 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 	initCmd.Flags().Bool("force", false, "Overwrite existing file if present")
 	initCmd.Flags().String("uprn", "", "Initial default for UPRN")
 	initCmd.Flags().Bool("json", false, "Initial default: output JSON")
+	initCmd.Flags().Bool("firmware-enable", false, "Enable firmware OTA endpoints")
+	initCmd.Flags().String("firmware-version", "", "Firmware version string")
+	initCmd.Flags().String("firmware-file", "", "Path to firmware binary file")
 	cmd.AddCommand(initCmd)
 
 	// `config set <key> <value>`

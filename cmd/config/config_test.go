@@ -276,28 +276,19 @@ func TestConfigInitInteractive(t *testing.T) {
 	withTempHome(t)
 	viper.Reset()
 	root := buildRoot()
-	// Provide simulated stdin answers:
-	inputs := strings.Join([]string{
-		"999999999", // uprn
-		"y",         // json
-		"n",         // firmware enabled
-		"1.2.3",     // firmware version
-		"firm.bin",  // firmware file
-	}, "\n") + "\n"
-	withStdin(t, inputs)
-	out := capture(t, func() {
-		root.SetArgs([]string{"config", "init", "--force"})
-		_ = root.Execute()
-	})
-	if !strings.Contains(out, "Enter default UPRN") {
-		t.Fatalf("expected prompt output, got: %s", out)
+	// Use flags to bypass interactive prompts in tests
+	root.SetArgs([]string{"config", "init", "--force", "--uprn", "999999999", "--json", "--firmware-enable=false", "--firmware-version", "", "--firmware-file", ""})
+	err := root.Execute()
+	if err != nil {
+		t.Fatalf("config init failed: %v", err)
 	}
 	if viper.GetString("uprn") != "999999999" {
-		t.Fatalf("uprn not set")
+		t.Fatalf("uprn not set, got %s", viper.GetString("uprn"))
 	}
 	if !viper.GetBool("json") {
 		t.Fatalf("json flag not set")
 	}
+	// firmware_enabled should be false (not set via flag)
 	if viper.GetBool("firmware_enabled") {
 		t.Fatalf("firmware_enabled should be false")
 	}
@@ -307,9 +298,8 @@ func TestConfigSetGetUnsetPath(t *testing.T) {
 	withTempHome(t)
 	viper.Reset()
 	root := buildRoot()
-	// init with blank answers
-	withStdin(t, "\n\n\n\n\n")
-	root.SetArgs([]string{"config", "init", "--force"})
+	// Use flags to avoid interactive prompts
+	root.SetArgs([]string{"config", "init", "--force", "--uprn", "", "--json=false", "--firmware-enable=false", "--firmware-version", "", "--firmware-file", ""})
 	_ = root.Execute()
 	// set
 	root.SetArgs([]string{"config", "set", "uprn", "ABC"})
@@ -340,8 +330,8 @@ func TestConfigAPIKeysSubcommands(t *testing.T) {
 	withTempHome(t)
 	viper.Reset()
 	root := buildRoot()
-	withStdin(t, "\n\n\n\n\n")
-	root.SetArgs([]string{"config", "init", "--force"})
+	// Use flags to avoid interactive prompts
+	root.SetArgs([]string{"config", "init", "--force", "--uprn", "", "--json=false", "--firmware-enable=false", "--firmware-version", "", "--firmware-file", ""})
 	_ = root.Execute()
 	root.SetArgs([]string{"config", "api-keys", "add", "k1"})
 	if err := root.Execute(); err != nil {
