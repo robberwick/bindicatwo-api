@@ -90,6 +90,7 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 					Label:   "Enter default UPRN (Unique Property Reference Number)",
 					Default: "",
 					Stdin:   os.Stdin,
+					Stdout:  os.Stderr,
 					Validate: func(input string) error {
 						input = strings.TrimSpace(input)
 						// Allow empty, but if provided, must be at least 8 characters
@@ -112,6 +113,7 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 					Label:     "Default output JSON",
 					IsConfirm: true,
 					Stdin:     os.Stdin,
+					Stdout:    os.Stderr,
 				}
 				jsonResult, err := jsonPrompt.Run()
 				if err != nil && err != promptui.ErrAbort {
@@ -129,6 +131,7 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 					Label:     "Enable firmware OTA endpoints",
 					IsConfirm: true,
 					Stdin:     os.Stdin,
+					Stdout:    os.Stderr,
 				}
 				firmwareEnabledResult, err := firmwareEnabledPrompt.Run()
 				if err != nil && err != promptui.ErrAbort {
@@ -145,6 +148,7 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 					Label:   "Enter firmware version string (optional)",
 					Default: "",
 					Stdin:   os.Stdin,
+					Stdout:  os.Stderr,
 				}
 				result, err := firmwareVersionPrompt.Run()
 				if err != nil {
@@ -161,6 +165,7 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 					Label:   "Enter firmware binary file path (optional)",
 					Default: "",
 					Stdin:   os.Stdin,
+					Stdout:  os.Stderr,
 				}
 				result, err := firmwareFilePrompt.Run()
 				if err != nil {
