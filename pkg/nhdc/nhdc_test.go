@@ -360,3 +360,22 @@ func TestTypeToBinID_Coverage(t *testing.T) {
 		t.Errorf("expected empty bin for unknown type, got %q", unknown)
 	}
 }
+
+func TestSearchAddresses_EmptyPostcode(t *testing.T) {
+	client := NewClient()
+	_, err := SearchAddresses(client, "")
+	if err == nil {
+		t.Fatal("expected error for empty postcode")
+	}
+	if err.Error() != "postcode is required" {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestSearchAddresses_WhitespacePostcode(t *testing.T) {
+	client := NewClient()
+	_, err := SearchAddresses(client, "   \t\n  ")
+	if err == nil {
+		t.Fatal("expected error for whitespace-only postcode")
+	}
+}
