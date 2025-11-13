@@ -16,6 +16,8 @@ This project pairs with the corresponding firmware client here:
 - Install
 - Configuration (file and environment)
 - CLI usage
+  - Searching for addresses by postcode
+  - Querying bin schedules
 - HTTP server usage
 - Authentication (API keys)
 - Rate limiting and caching
@@ -29,9 +31,14 @@ website, scrapes upcoming bin collections, and outputs a normalized schedule. Th
 
 
 ## Quick start
+- Search for addresses by postcode:
+  - bindicatwo search -p "SG4 0JH"                    # list all addresses for postcode
+  - bindicatwo search -p "SG4 0JH" -i                 # interactive: select an address
+  - bindicatwo search -p "SG4 0JH" -j                 # JSON output
+
 - CLI one-off query:
-  - bindicatwo query --search "SG4 9TY" --prefer "Some Street"  # human-readable output
-  - bindicatwo query -s "SG4 9TY" -j                           # JSON output
+  - bindicatwo query --uprn 100080795976              # human-readable output
+  - bindicatwo query -u 100080795976 -j               # JSON output
 
 - Run HTTP server on port 8080:
   - bindicatwo serve
@@ -39,9 +46,8 @@ website, scrapes upcoming bin collections, and outputs a normalized schedule. Th
   - curl "http://127.0.0.1:8080/schedule?uprn=100080795976" -H "X-API-Key: <key>"  # backward compatible query param
 
 - Create a config file and set defaults:
-  - bindicatwo config init
-  - bindicatwo config set search "SG4 9TY"
-  - bindicatwo config set prefer "Some Street"
+  - bindicatwo config init                             # interactive setup (includes postcode search option)
+  - bindicatwo config set uprn 100080795976            # set UPRN directly
 
 
 ## Install
@@ -67,16 +73,19 @@ You can also pass a custom file with --config path/to/config.yaml.
 Environment variable prefix for generic keys is BINDICATWO_. For example, BINDICATWO_SEARCH sets the default search query for CLI usage. The server subcommand also binds a few un-prefixed env vars for typical hosting environments (see below).
 
 To create and manage the config file:
-- bindicatwo config init                     # interactive
+- bindicatwo config init                     # interactive (includes postcode search option)
 - bindicatwo config path                     # show path
 - bindicatwo config get                      # show values
 - bindicatwo config set <key> <value>        # set a value
 - bindicatwo config unset <key>              # delete a key
 - bindicatwo config api-keys ...             # manage API keys (see Authentication)
 
+The interactive `config init` now includes an option to search for your address by postcode. 
+When enabled, it will call the Cloud9 API to fetch matching addresses, allow you to select 
+one from the list, and automatically set the UPRN in your config.
+
 Supported config keys:
-- search: default address or postcode
-- prefer: choose an address containing this substring when multiple matches exist
+- uprn: default UPRN (Unique Property Reference Number)
 - json: default output mode for CLI (true/false)
 - firmware_enabled: enable /firmware/* endpoints on the HTTP server
 - firmware_version: string served at /firmware/version.txt
@@ -88,18 +97,37 @@ Supported config keys:
 ## CLI usage
 The CLI is provided by the root bindicatwo command with subcommands.
 
+### Searching for addresses by postcode
+
+Use the `search` subcommand to find addresses and their UPRNs by UK postcode:
+
+- bindicatwo search [flags]
+  - --postcode, -p: UK postcode to search for (required)
+  - --json,     -j: output JSON instead of human-readable
+  - --interactive, -i: interactive mode to select an address from the list
+  - --config: path to config file (overrides default search path)
+
+Examples:
+- bindicatwo search -p "SG4 0JH"              # list all addresses for this postcode
+- bindicatwo search -p "SG4 0JH" -i           # select an address interactively
+- bindicatwo search -p "SG4 0JH" -j           # output as JSON
+
+The search command queries the Cloud9 Technologies API and returns all matching addresses
+with their UPRNs. Use interactive mode (-i) to select an address and display just its UPRN.
+
+### Querying bin schedules
+
 - bindicatwo query [flags]
-  - --search, -s: address or postcode
-  - --prefer, -p: prefer address containing this text when multiple matches
-  - --json,   -j: output JSON instead of human-readable
+  - --uprn, -u: UPRN (Unique Property Reference Number)
+  - --json, -j: output JSON instead of human-readable
   - --config: path to config file (overrides default search path)
 
 Environment variables for CLI defaults (via Viper prefix):
-- BINDICATWO_SEARCH, BINDICATWO_PREFER, BINDICATWO_JSON
+- BINDICATWO_UPRN, BINDICATWO_JSON
 
 Examples:
-- bindicatwo query -s "SG4 9TY"
-- bindicatwo query -s "SG4 9TY" -p "Some Street" -j
+- bindicatwo query -u 100080795976                # human-readable output
+- bindicatwo query -u 100080795976 -j             # JSON output
 
 JSON shape returned by --json is an array of items with normalized fields designed for machines. Relative fields (e.g., daysUntil, isToday, isTomorrow) are computed by the tool before printing.
 
