@@ -46,7 +46,7 @@ website, scrapes upcoming bin collections, and outputs a normalized schedule. Th
   - curl "http://127.0.0.1:8080/schedule?uprn=100080795976" -H "X-API-Key: <key>"  # backward compatible query param
 
 - Create a config file and set defaults:
-  - bindicatwo config init                             # interactive setup (includes postcode search option)
+  - bindicatwo config init                             # interactive setup (enter UPRN or '?' to search by postcode)
   - bindicatwo config set uprn 100080795976            # set UPRN directly
 
 
@@ -73,16 +73,16 @@ You can also pass a custom file with --config path/to/config.yaml.
 Environment variable prefix for generic keys is BINDICATWO_. For example, BINDICATWO_SEARCH sets the default search query for CLI usage. The server subcommand also binds a few un-prefixed env vars for typical hosting environments (see below).
 
 To create and manage the config file:
-- bindicatwo config init                     # interactive (includes postcode search option)
+- bindicatwo config init                     # interactive (enter UPRN or '?' to search by postcode)
 - bindicatwo config path                     # show path
 - bindicatwo config get                      # show values
 - bindicatwo config set <key> <value>        # set a value
 - bindicatwo config unset <key>              # delete a key
 - bindicatwo config api-keys ...             # manage API keys (see Authentication)
 
-The interactive `config init` now includes an option to search for your address by postcode. 
-When enabled, it will call the Cloud9 API to fetch matching addresses, allow you to select 
-one from the list, and automatically set the UPRN in your config.
+The interactive `config init` prompts for a UPRN. Enter '?' to search for your address by 
+postcode instead. The postcode search will call the Cloud9 API to fetch matching addresses, 
+allow you to select one from the list, and automatically set the UPRN in your config.
 
 Supported config keys:
 - uprn: default UPRN (Unique Property Reference Number)
