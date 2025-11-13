@@ -5,14 +5,33 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/manifoldco/promptui"
+	"github.com/robberwick/bindicatwo-api/pkg/nhdc"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+// bellSkipper is a writer that filters out bell characters to prevent
+// terminal chimes on Windows
+type bellSkipper struct {
+	io.WriteCloser
+}
+
+func (bs *bellSkipper) Write(b []byte) (int, error) {
+	const charBell = 7 // bell char
+	var newBytes []byte
+	for _, v := range b {
+		if v != charBell {
+			newBytes = append(newBytes, v)
+		}
+	}
+	return bs.WriteCloser.Write(newBytes)
+}
 
 func defaultConfigDir() string {
 	home, err := os.UserHomeDir()
@@ -86,25 +105,80 @@ func AddConfigSubcommand(root *cobra.Command) *cobra.Command {
 			if uprnFlagProvided {
 				uprnIn = uprnFlag
 			} else {
-				uprnPrompt := promptui.Prompt{
-					Label:   "Enter default UPRN (Unique Property Reference Number)",
-					Default: "",
-					Stdin:   os.Stdin,
-					Stdout:  os.Stderr,
-					Validate: func(input string) error {
-						input = strings.TrimSpace(input)
-						// Allow empty, but if provided, must be at least 8 characters
-						if input != "" && len(input) < 8 {
-							return errors.New("UPRN must be at least 8 characters")
+				// Prompt for UPRN, allowing "?" to trigger postcode search
+				for uprnIn == "" {
+					uprnPrompt := promptui.Prompt{
+						Label:   "Enter default UPRN (or '?' to search by postcode)",
+						Default: "",
+						Stdin:   os.Stdin,
+						Stdout:  os.Stderr,
+						Validate: func(input string) error {
+							input = strings.TrimSpace(input)
+							// Allow empty or "?" or valid UPRN
+							if input == "" || input == "?" {
+								return nil
+							}
+							if len(input) < 8 {
+								return errors.New("UPRN must be at least 8 characters")
+							}
+							return nil
+						},
+					}
+					result, err := uprnPrompt.Run()
+					if err != nil {
+						return fmt.Errorf("UPRN prompt failed: %w", err)
+					}
+					result = strings.TrimSpace(result)
+
+					// If user enters "?", trigger postcode search
+					if result == "?" {
+						// Prompt for postcode
+						postcodePrompt := promptui.Prompt{
+							Label:  "Enter UK postcode",
+							Stdin:  os.Stdin,
+							Stdout: os.Stderr,
+							Validate: func(input string) error {
+								input = strings.TrimSpace(input)
+								if input == "" {
+									return errors.New("postcode cannot be empty")
+								}
+								return nil
+							},
 						}
-						return nil
-					},
+						postcode, err := postcodePrompt.Run()
+						if err != nil {
+							return fmt.Errorf("postcode prompt failed: %w", err)
+						}
+
+						// Search for addresses
+						client := nhdc.NewClient()
+						addresses, err := nhdc.SearchAddresses(client, postcode)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Failed to search addresses: %v\n", err)
+							// Loop back to UPRN prompt
+							continue
+						}
+
+						if len(addresses) == 0 {
+							fmt.Fprintln(os.Stderr, "No addresses found for postcode:", postcode)
+							// Loop back to UPRN prompt
+							continue
+						}
+
+						// Select address from list
+						selected, err := selectAddressForConfig(addresses)
+						if err != nil {
+							fmt.Fprintf(os.Stderr, "Address selection failed: %v\n", err)
+							// Loop back to UPRN prompt
+							continue
+						}
+						uprnIn = selected.UPRN
+						fmt.Fprintf(os.Stderr, "Selected: %s (UPRN: %s)\n", selected.FullAddress, selected.UPRN)
+					} else {
+						// User entered a UPRN directly or left it empty
+						uprnIn = result
+					}
 				}
-				result, err := uprnPrompt.Run()
-				if err != nil {
-					return fmt.Errorf("UPRN prompt failed: %w", err)
-				}
-				uprnIn = strings.TrimSpace(result)
 			}
 
 			// JSON output confirm prompt (skip if flag provided)
@@ -629,4 +703,39 @@ func deleteKey(key string) error {
 	}
 	// Best-effort: some formats may retain nulls; WriteConfig will serialize current view.
 	return nil
+}
+
+// selectAddressForConfig shows an interactive prompt for the user to select an address during config init
+func selectAddressForConfig(addresses []nhdc.Address) (*nhdc.Address, error) {
+	if len(addresses) == 0 {
+		return nil, fmt.Errorf("no addresses to select from")
+	}
+
+	if len(addresses) == 1 {
+		fmt.Fprintln(os.Stderr, "Only one address found, selecting automatically")
+		return &addresses[0], nil
+	}
+
+	templates := &promptui.SelectTemplates{
+		Label:    "{{ . }}",
+		Active:   "▸ {{ .FullAddress | cyan }}",
+		Inactive: "  {{ .FullAddress }}",
+		Selected: "✓ {{ .FullAddress | green }}",
+	}
+
+	prompt := promptui.Select{
+		Label:     "Select an address",
+		Items:     addresses,
+		Templates: templates,
+		Size:      10,
+		HideHelp:  true,
+		Stdout:    &bellSkipper{os.Stderr},
+	}
+
+	idx, _, err := prompt.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	return &addresses[idx], nil
 }

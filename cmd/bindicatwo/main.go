@@ -8,6 +8,7 @@ import (
 
 	"github.com/robberwick/bindicatwo-api/cmd/config"
 	"github.com/robberwick/bindicatwo-api/cmd/query"
+	"github.com/robberwick/bindicatwo-api/cmd/search"
 	"github.com/robberwick/bindicatwo-api/cmd/serve"
 	"github.com/robberwick/bindicatwo-api/pkg/configutil"
 	"github.com/robberwick/bindicatwo-api/pkg/nhdc"
@@ -32,6 +33,7 @@ func execute() error {
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error { return configutil.Init(cfgFile) }
 
 	config.AddConfigSubcommand(rootCmd)
+	search.AddSearchSubcommand(rootCmd)
 	query.AddQuerySubcommand(rootCmd, func(cmd *cobra.Command) error {
 		uprn := viper.GetString("uprn")
 		asJSON := viper.GetBool("json")

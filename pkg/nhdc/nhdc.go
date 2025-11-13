@@ -57,6 +57,24 @@ type ContainerDetails struct {
 	ImageURL             string  `json:"imageURL"`
 }
 
+// Address represents an address returned from the postcode search API
+type Address struct {
+	UPRN         string  `json:"uprn"`
+	USRN         string  `json:"usrn"`
+	AddressLine1 string  `json:"addressLine1"`
+	AddressLine2 string  `json:"addressLine2"`
+	Town         string  `json:"town"`
+	Postcode     string  `json:"postcode"`
+	FullAddress  string  `json:"fullAddress"`
+	MapLng       float64 `json:"mapLng"`
+	MapLat       float64 `json:"mapLat"`
+}
+
+// AddressSearchResponse represents the response from the addresses endpoint
+type AddressSearchResponse struct {
+	Addresses []Address `json:"addresses"`
+}
+
 var typeToSprite = map[string]string{
 	"Food waste":                "food",
 	"Food Caddy":                "food",
@@ -199,6 +217,52 @@ func GetSchedule(c *http.Client, uprn string) ([]Item, error) {
 	items := convertMobileAPIToItems(apiResp)
 
 	return items, nil
+}
+
+// SearchAddresses searches for addresses by UK postcode using the Cloud9 addresses endpoint
+func SearchAddresses(c *http.Client, postcode string) ([]Address, error) {
+	postcode = strings.TrimSpace(postcode)
+	if postcode == "" {
+		return nil, errors.New("postcode is required")
+	}
+
+	// URL encode the postcode and build the request URL
+	urlStr := fmt.Sprintf("%s/addresses?postcode=%s", MOBILE_API_BASE, strings.ReplaceAll(postcode, " ", "%20"))
+	req, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set required headers (matching the problem statement)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Basic Y2xvdWQ5OmlkQmNWNGJvcjU=")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Version", "2")
+	req.Header.Set("X-App-Version", "3.0.56")
+	req.Header.Set("X-Platform", "android")
+	req.Header.Set("User-Agent", "GoBindicatwo/1.0")
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("addresses API returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var apiResp AddressSearchResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse addresses API response: %w", err)
+	}
+
+	return apiResp.Addresses, nil
 }
 
 // ComputeRelativeFields sets DaysUntil and Next flags.
