@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,23 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+// bellSkipper is a writer that filters out bell characters to prevent
+// terminal chimes on Windows
+type bellSkipper struct {
+	io.WriteCloser
+}
+
+func (bs *bellSkipper) Write(b []byte) (int, error) {
+	const charBell = 7 // bell char
+	var newBytes []byte
+	for _, v := range b {
+		if v != charBell {
+			newBytes = append(newBytes, v)
+		}
+	}
+	return bs.WriteCloser.Write(newBytes)
+}
 
 func defaultConfigDir() string {
 	home, err := os.UserHomeDir()
@@ -710,7 +728,8 @@ func selectAddressForConfig(addresses []nhdc.Address) (*nhdc.Address, error) {
 		Items:     addresses,
 		Templates: templates,
 		Size:      10,
-		Stdout:    os.Stderr,
+		HideHelp:  true,
+		Stdout:    &bellSkipper{os.Stderr},
 	}
 
 	idx, _, err := prompt.Run()

@@ -3,6 +3,7 @@ package search
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/manifoldco/promptui"
@@ -10,6 +11,23 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+// bellSkipper is a writer that filters out bell characters to prevent
+// terminal chimes on Windows
+type bellSkipper struct {
+	io.WriteCloser
+}
+
+func (bs *bellSkipper) Write(b []byte) (int, error) {
+	const charBell = 7 // bell char
+	var newBytes []byte
+	for _, v := range b {
+		if v != charBell {
+			newBytes = append(newBytes, v)
+		}
+	}
+	return bs.WriteCloser.Write(newBytes)
+}
 
 // AddSearchSubcommand adds the `search` subcommand which allows users to search for
 // addresses by postcode and optionally select one to get the UPRN
@@ -106,7 +124,8 @@ func selectAddress(addresses []nhdc.Address) (*nhdc.Address, error) {
 		Items:     addresses,
 		Templates: templates,
 		Size:      10,
-		Stdout:    os.Stderr,
+		HideHelp:  true,
+		Stdout:    &bellSkipper{os.Stderr},
 	}
 
 	idx, _, err := prompt.Run()
